@@ -1,0 +1,157 @@
+broker:
+  host: "0.0.0.0"
+  mqtt_port: 1883
+  mqtts_port: 8883
+  max_connections: 10000
+  auth:
+    type: file          # allow_all | file
+    file: "/etc/broker/passwd"
+  tls:
+    cert: "/etc/broker/cert.pem"
+    key: "/etc/broker/key.pem"
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+  tls: false
+  token:
+    secret: "change-me"
+    expire_secs: 3600
+
+agent:
+  llm:
+    api_url: "http://localhost:11434/v1"
+    model: "qwen3-coder:30b"
+    max_tokens: 2048
+  channels:
+    text:
+      enabled: false
+    qq:
+      enabled: false
+      onebot_url: "ws://localhost:6700"
+      authorized_users: []
+    voice:
+      enabled: true
+      engine: "sherpa"           # "stub" (default, in-process scripted) or "sherpa" (real audio)
+      # Display name for the wake word. ONLY used by the stub engine
+      # (`StubWakeDetector`). With `engine = "sherpa"` the actual
+      # wake detection is driven entirely by `kws_keywords_inline`
+      # below — the `@alias` suffix on each entry is the string the
+      # KWS will report back to the voice loop on a hit. The
+      # startup log line shows both this label and the live
+      # active aliases from `kws_keywords_inline` so it's clear
+      # what's actually being listened for.
+      wake_word: "你好小金"
+      sample_rate: 16000
+      capture_timeout_secs: 20
+      followup_timeout_secs: 15
+      timeout_prompt: "等待超时"
+      follow_up_patterns:
+        - '[?？]\s*$'
+        - "请确认"
+        - "是否"
+        - "对吗"
+        - "请告诉我"
+        - "请提供"
+      # Aliases that should be treated as "exit / stop" commands. When the
+      # KWS detects one of these, the current session is short-circuited
+      # and the loop returns to listening for a new wake. This is
+      # independent of `kws_keywords_inline`: the inline entries are
+      # what the KWS *can* hear; the strings below are the policy
+      # mapping (alias → exit vs wake). Each must be a substring (case-
+      # insensitive) of one of the inline aliases.
+      exit_wake_words:
+        - "退出任务"
+
+      # ── sherpa-onnx model paths (only used when engine = "sherpa") ────
+      # KWS (KeywordSpotter) — wake-word detection. WenetSpeech 3.3M is
+      # the recommended Chinese model. The bundled keywords.txt contains
+      # pre-defined wake phrases; `kws_keywords_inline` adds custom ones.
+      kws_encoder:        "/home/xiao/models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/encoder-epoch-12-avg-2-chunk-16-left-64.onnx"
+      kws_decoder:        "/home/xiao/models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/decoder-epoch-12-avg-2-chunk-16-left-64.onnx"
+      kws_joiner:         "/home/xiao/models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/joiner-epoch-12-avg-2-chunk-16-left-64.onnx"
+      kws_tokens:         "/home/xiao/models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/tokens.txt"
+      kws_keywords_file:  null   # null = use the bundled <kws_encoder dir>/keywords.txt
+      # Custom pinyin-token wake words added on top of keywords_file. Each
+      # line is `<pinyin tokens separated by spaces> @<alias>`. Generate
+      # the token sequence with:
+      #   sherpa-onnx-cli text2token --tokens <tokens.txt> --tokens-type ppinyin \
+      #       keywords_raw.txt keywords.txt
+      #
+      # To restrict the KWS to ONLY these two wake words (ignoring the
+      # bundled "你好军哥 / 小爱同学 / 蛋哥蛋哥" set), point
+      # `kws_keywords_file` at a file containing just these two lines
+      # and leave `kws_keywords_inline` empty.
+      kws_keywords_inline:
+        - "n ǐ h ǎo x iǎo j īn @你好小金"
+        - "t uì ch ū r èn w u @退出任务"
+      kws_num_threads: 2
+      kws_provider: "cpu"
+
+      # Streaming Zipformer ASR (Chinese+English bilingual), e.g.:
+      #   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2
+      asr_encoder:  "/home/xiao/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/encoder-epoch-99-avg-1.onnx"
+      asr_decoder:  "/home/xiao/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/decoder-epoch-99-avg-1.onnx"
+      asr_joiner:   "/home/xiao/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/joiner-epoch-99-avg-1.onnx"
+      asr_tokens:   "/home/xiao/models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tokens.txt"
+      num_threads: 2
+      provider: "cpu"
+
+      # Offline VITS TTS (Piper), e.g. vits-piper-zh_CN-huayan-medium:
+      tts_model:    "/home/xiao/models/vits-piper-zh_CN-huayan-medium/zh_CN-huayan-medium.onnx"
+      tts_tokens:   "/home/xiao/models/vits-piper-zh_CN-huayan-medium/tokens.txt"
+      tts_data_dir: "/home/xiao/models/vits-piper-zh_CN-huayan-medium/espeak-ng-data"
+      tts_length_scale: 1.0
+      tts_speed: 1.0
+      tts_debug: false
+
+      # ── cpal device selection + VAD (only used when engine = "sherpa") ──
+      # The device name is matched against cpal's input_devices()/output_devices()
+      # list. Empty string / null = OS default (whatever PulseAudio / PipeWire
+      # / ALSA has configured as `default sink/source`). Set these explicitly
+      # to a device name from the `* in[N] = "..."` lines printed in the
+      # startup diagnostic (cpal's view, not PulseAudio's).
+      #
+      # On PipeWire/PulseAudio systems the cpal Alsa host sees the
+      # kernel-friendly name (e.g. "USB MIC Device", "HDA Intel PCH")
+      # — not the long PulseAudio source name in `pactl list sources`
+      # (e.g. "alsa_input.usb-Generalplus_USB_MIC_Device-00.mono-fallback").
+      # Use one of the names from the cpal device list. Substring
+      # matching (case-insensitive, must be unique) is also accepted.
+      #
+      # Set to "default" (or null) to defer to the OS's default input
+      # source — recommended when WirePlumber occasionally fails to
+      # expose the friendly kernel name. Pair this with
+      # `pactl set-default-source <long-name>` so the routing target
+      # is stable across PipeWire resyncs.
+      audio_input_device:  "default"
+      audio_output_device: "HDA Intel PCH"
+      # Silero VAD (sherpa-onnx VoiceActivityDetector). When set, the cpal
+      # capture runs user speech through the VAD and stops on
+      # `vad_min_silence_ms` of trailing silence — far more reliable in
+      # noisy rooms than RMS thresholding. Recommended model:
+      #   silero_vad_v5.onnx  (~2.3 MB, from sherpa-onnx asr-models release)
+      # Leave null to fall back to the energy VAD below.
+      vad_model:            "/home/xiao/models/silero_vad_v5.onnx"
+      vad_threshold:        0.5     # speech probability threshold
+      vad_min_silence_ms:   500     # trailing silence that ends capture
+      vad_min_speech_ms:    250     # minimum speech to count as speech
+      vad_max_speech_secs:  20.0    # forced cut-off (prevents runaway capture)
+      vad_num_threads:      1
+      vad_buffer_secs:      30.0    # VAD internal ring buffer
+      # Fallback RMS energy VAD (used only when vad_model is null).
+      rms_threshold: 0.01
+      silence_ms: 500
+      pre_speech_ms: 300
+
+      # ── stub-only knobs (ignored when engine = "sherpa") ─────────────
+      stub_utterances:
+        - "列出所有客户端"
+        - "你能确认一下当前订阅数量吗"
+        - "好的"
+      stub_wake_interval_secs: 5
+  skills:
+    mqtt_manager:
+      enabled: true
+      api_base_url: "http://localhost:8080"
+      api_token: "change-me"

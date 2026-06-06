@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "broker",
+    "api",
+    "agent",
+    "voice",
+    "server",
+    "common",
+]
+resolver = "2"

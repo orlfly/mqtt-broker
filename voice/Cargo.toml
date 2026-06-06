@@ -1,0 +1,28 @@
+[package]
+name = "voice"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# Real-time audio via cpal + sherpa-onnx (ASR/TTS/KWS). On by default —
+# the voice channel only makes sense with real audio. Disable for
+# stub-only iteration (e.g. testing the agent state machine without
+# touching audio code paths):
+#   cargo build -p voice --no-default-features
+sherpa = ["dep:cpal", "dep:ringbuf", "dep:sherpa-onnx", "dep:hound"]
+default = ["sherpa"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+anyhow = "1"
+thiserror = "1"
+async-trait = "0.1"
+common = { path = "../common" }
+
+cpal = { version = "0.16", optional = true }
+ringbuf = { version = "0.4", optional = true }
+sherpa-onnx = { version = "1.13", default-features = false, features = ["static"], optional = true }
+hound = { version = "3.5", optional = true }
