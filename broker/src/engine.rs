@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{info, error};
 
+use crate::management::{management_pair, ManagementHandle};
 use crate::state::{SharedBrokerState, create_shared_state};
 use crate::connection::ConnectionHandler;
 use crate::session::SessionManager;
@@ -66,6 +67,21 @@ impl MqttEngine {
                 }
             }
         }
+    }
+
+    /// Build a `(ManagementHandle, Future)` pair. Spawn the
+    /// future on tokio; clone the handle into anything that
+    /// needs to query broker state in-process (the agent's
+    /// tools, for instance). This is the replacement for the
+    /// old HTTP-based tool path — see
+    /// `broker::management` module docs for the topology.
+    pub fn management_pair(
+        &self,
+    ) -> (
+        ManagementHandle,
+        impl std::future::Future<Output = ()> + Send,
+    ) {
+        management_pair(self.state.clone())
     }
 }
 

@@ -152,6 +152,12 @@ agent:
       stub_wake_interval_secs: 5
   skills:
     mqtt_manager:
+      # Whether the `list_clients` / `list_topics` /
+      # `get_topic_subscribers` tools are registered with the
+      # agent. Now that the tools talk to the broker in-process
+      # (see `agent::broker_tools`), the `api_base_url` and
+      # `api_token` fields are obsolete; they are still parsed
+      # for backward compatibility but ignored at runtime.
       enabled: true
       api_base_url: "http://localhost:8080"
       api_token: "change-me"

@@ -43,11 +43,22 @@ pub struct BrokerTlsConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ApiConfig {
+    /// Whether the HTTP management API is started. The API is
+    /// kept around for external admin tools / scripts; the
+    /// agent's own tools talk to the broker over an in-process
+    /// channel and don't need this. Defaults to `true` for
+    /// backward compatibility.
+    #[serde(default = "default_api_enabled")]
+    pub enabled: bool,
     pub host: String,
     pub port: u16,
     #[serde(default)]
     pub tls: bool,
     pub token: ApiTokenConfig,
+}
+
+fn default_api_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Clone)]

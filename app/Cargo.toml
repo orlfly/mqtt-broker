@@ -1,0 +1,24 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+# Domain crates
+common = { path = "../common" }
+broker = { path = "../broker" }
+api = { path = "../api" }
+agent = { path = "../agent" }
+voice = { path = "../voice" }
+
+# HTTP server (for the external management API)
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+zeroclaw = "0.1.7"

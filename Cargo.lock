@@ -35,9 +35,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "broker",
  "common",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -158,6 +158,23 @@ dependencies = [
  "tokio",
  "tower-http 0.5.2",
  "tracing",
+]
+
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "agent",
+ "anyhow",
+ "api",
+ "axum 0.7.9",
+ "broker",
+ "common",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "voice",
+ "zeroclaw",
 ]
 
 [[package]]
@@ -3159,20 +3176,6 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
-]
-
-[[package]]
-name = "server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "api",
- "axum 0.7.9",
- "broker",
- "common",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

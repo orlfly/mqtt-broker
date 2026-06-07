@@ -3,14 +3,18 @@ name = "agent"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "agent"
+path = "src/lib.rs"
+
 [dependencies]
 common = { path = "../common" }
 voice = { path = "../voice" }
+broker = { path = "../broker" }
 zeroclaw = "0.1.7"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 regex = "1"
 tracing = "0.1"
 anyhow = "1"
