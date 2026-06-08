@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
+use crate::packet::UserProperty;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum MqttProtocol {
     V311,
@@ -33,6 +35,9 @@ pub struct Subscription {
     pub client_id: String,
     pub topic_filter: String,
     pub qos: QoS,
+    pub no_local: bool,
+    pub retain_as_published: bool,
+    pub retain_handling: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +54,13 @@ pub struct PublishPacket {
     pub payload: Vec<u8>,
     pub qos: QoS,
     pub retain: bool,
+    pub user_properties: Vec<UserProperty>,
+    pub content_type: Option<String>,
+    pub response_topic: Option<String>,
+    pub correlation_data: Option<Vec<u8>>,
+    pub message_expiry_interval: Option<u32>,
+    pub payload_format_indicator: Option<u8>,
+    pub topic_alias: Option<u16>,
 }
 
 #[derive(Debug, Clone)]

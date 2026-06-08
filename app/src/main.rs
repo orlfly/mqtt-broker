@@ -44,6 +44,9 @@ use zeroclaw::agent::AgentBuilder;
 use zeroclaw::memory::NoneMemory;
 use zeroclaw::observability::NoopObserver;
 use zeroclaw::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
+use zeroclaw::security::{AutonomyLevel, SecurityPolicy};
+
+mod soul;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -152,13 +155,37 @@ async fn main() -> Result<()> {
     // Each tool holds a cheap clone of the handle. The
     // handle internally is an `mpsc::Sender` so cloning is
     // a single `Arc` bump.
-    let tools: Vec<Box<dyn zeroclaw::tools::Tool>> = vec![
+
+    // Resolve workspace dir early — needed for both soul seeding and
+    // zeroclaw file tool sandboxing.
+    let workspace_dir = soul::resolve_workspace_dir(&cfg.agent.workspace_dir);
+
+    // Build zeroclaw file management tools (shell, file read/write/edit,
+    // glob search, content search) with Full autonomy within workspace.
+    let security = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::Full,
+        workspace_dir: workspace_dir.clone(),
+        workspace_only: true,
+        ..SecurityPolicy::default()
+    });
+    let file_tools = zeroclaw::tools::default_tools(security);
+
+    let mut tools: Vec<Box<dyn zeroclaw::tools::Tool>> = vec![
         Box::new(ListClientsTool::new(mgmt.clone())),
         Box::new(ListTopicsTool::new(mgmt.clone())),
         Box::new(GetTopicSubscribersTool::new(mgmt.clone())),
     ];
+    tools.extend(file_tools);
 
-    let agent = build_agent(&cfg, tools)?;
+    // ---- 5b. OpenClaw soul workspace ----------------------------------
+    // `zeroclaw` 的 system-prompt 拼装会按固定顺序读工作区里的
+    // AGENTS.md / SOUL.md / TOOLS.md / IDENTITY.md / USER.md 等。
+    // 这里：解析路径 → 首次启动写默认内容 → 把绝对路径和
+    // identity_format 透传给 AgentBuilder。
+    soul::ensure_workspace(&workspace_dir)?;
+    let identity_config = soul::build_identity_config(&cfg.agent.identity_format);
+
+    let agent = build_agent(&cfg, tools, workspace_dir, identity_config)?;
     let classifier = FollowupClassifier::new(&voice_cfg.follow_up_patterns);
     let loop_cfg = VoiceLoopConfig {
         capture_timeout: Duration::from_secs(voice_cfg.capture_timeout_secs),
@@ -171,6 +198,7 @@ async fn main() -> Result<()> {
             .exit_wake_words
             .first()
             .map(|_| "好的,任务已退出".to_string()),
+        voice_output: cfg.agent.voice_output.clone(),
     };
 
     let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -219,6 +247,8 @@ async fn main() -> Result<()> {
 fn build_agent(
     cfg: &Config,
     tools: Vec<Box<dyn zeroclaw::tools::Tool>>,
+    workspace_dir: std::path::PathBuf,
+    identity_config: zeroclaw::config::IdentityConfig,
 ) -> Result<zeroclaw::agent::Agent> {
     let llm_cfg = &cfg.agent.llm;
     let api_key = llm_cfg.api_key.clone().unwrap_or_else(|| "ollama".into());
@@ -237,6 +267,8 @@ fn build_agent(
         .tool_dispatcher(Box::new(NativeToolDispatcher))
         .model_name(llm_cfg.model.clone())
         .temperature(llm_cfg.temperature)
+        .workspace_dir(workspace_dir)
+        .identity_config(identity_config)
         .build()?;
 
     Ok(agent)

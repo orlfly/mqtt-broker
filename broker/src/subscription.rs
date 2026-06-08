@@ -11,6 +11,10 @@ impl SubscriptionTree {
 
     pub async fn add(&self, subscription: Subscription) {
         let mut subs = self.state.write().await;
+        // Remove existing subscription for same client+topic before adding
+        if let Some(subscribers) = subs.subscriptions.get_mut(&subscription.topic_filter) {
+            subscribers.retain(|s| s.client_id != subscription.client_id);
+        }
         subs.subscriptions
             .entry(subscription.topic_filter.clone())
             .or_default()

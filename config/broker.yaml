@@ -19,6 +19,40 @@ api:
     expire_secs: 3600
 
 agent:
+  # OpenClaw 工作区根目录。zeroclaw 在拼 system prompt 时会按固定顺序
+  # 读这里的 AGENTS.md / SOUL.md / TOOLS.md / IDENTITY.md / USER.md /
+  # HEARTBEAT.md / MEMORY.md（详见 `app/src/soul.rs`）。相对路径以
+  # 进程 cwd 为基准；绝对路径直接使用。首次启动会按需写入默认套件，
+  # 用户后续编辑保留。
+  workspace_dir: "config/soul"
+  # Identity 格式：`openclaw`（默认，多文件 markdown 注入）或 `aieos`
+  # （单文件 JSON schema，需要再配 aieos_path / aieos_inline，本仓库
+  # 暂未启用 AIEOS 路径）。
+  identity_format: "openclaw"
+  # 语音输出改写：把 LLM 原始 markdown / 富文本回复转成 TTS 友好
+  # 版本。原始 response 始终保留（用于日志、followup 分类、未来文本
+  # 通道），只有送进 `tts.speak()` 的字符串会走 transform。详见
+  # `agent/src/voice_text.rs`。
+  voice_output:
+    enabled: true
+    max_chars: 120
+    truncate_suffix: "，后面的内容省略了"
+    strip_emphasis: true       # 去 **xxx** / __xxx__
+    strip_headings: true       # 去行首 #
+    expand_lists: true         # bullet list 展开成"第一，...。第二，...。"
+    strip_markdown_links: true # [text](url) -> text
+    drop_bare_urls: true       # http(s)://... -> "链接"
+    drop_code: true            # 去 inline code + fenced code block
+    drop_tables: true          # 去 markdown 表格
+    drop_emoji: true           # 去常见 emoji
+    collapse_whitespace: true  # 多空白合并
+    # 中文限定：当前 TTS 是 Matcha-zh-baker（中文专用），若 LLM 输出
+    # 混入英文 / emoji / 拉丁字符，TTS 会按拼音硬念 / 静默失败。开启
+    # 后 CJK 比例 < 50% 时会记 warn 日志并把非 CJK 字符从 TTS 文本
+    # 里剥掉再送进 TTS（原始 response 保留）。
+    require_chinese: true
+    require_chinese_min_ratio: 0.5
+    require_chinese_action: "warn"   # warn | drop | pass
   llm:
     api_url: "http://localhost:11434/v1"
     model: "qwen3-coder:30b"
@@ -97,10 +131,33 @@ agent:
       num_threads: 2
       provider: "cpu"
 
-      # Offline VITS TTS (Piper), e.g. vits-piper-zh_CN-huayan-medium:
-      tts_model:    "/home/xiao/models/vits-piper-zh_CN-huayan-medium/zh_CN-huayan-medium.onnx"
-      tts_tokens:   "/home/xiao/models/vits-piper-zh_CN-huayan-medium/tokens.txt"
-      tts_data_dir: "/home/xiao/models/vits-piper-zh_CN-huayan-medium/espeak-ng-data"
+      # Offline TTS — backend selector + model files.
+      # `tts_backend: "vits"` (default) — single-speaker VITS (e.g. Piper).
+      # `tts_backend: "kokoro"` — multi-speaker, native Chinese+English
+      #   in one model, requires `tts_voices` + `tts_dict_dir` + a list
+      #   of `tts_lexicons` paths. TTS sample rate 24kHz.
+      # `tts_backend: "matcha"` — non-autoregressive single-speaker.
+      #   For Chinese, uses sherpa-onnx matcha-icefall-zh-baker (Baker
+      #   dataset, ~72 MB acoustic + 51 MB vocos vocoder). Requires
+      #   `tts_vocoder` (vocos-22khz-univ.onnx) and `tts_rule_fsts`
+      #   (phone/date/number .fst files). Sample rate 22kHz.
+      tts_backend: "matcha"
+      # Matcha-icefall-zh-baker acoustic model + supporting files.
+      # Acoustic: ~72 MB. Vocoder: vocos-22khz-univ.onnx (~51 MB,
+      # shared across Matcha English/Chinese). All Apache 2.0.
+      # Downloads (mirror):
+      #   https://hf-mirror.com/csukuangfj/sherpa-onnx-matcha-tts-zh-baker
+      #   https://hf-mirror.com/csukuangfj/vocos-22khz-univ
+      tts_model:    "/home/xiao/models/matcha-icefall-zh-baker/model-steps-3.onnx"
+      tts_vocoder:  "/home/xiao/models/vocos-22khz-univ/vocos-22khz-univ.onnx"
+      tts_tokens:   "/home/xiao/models/matcha-icefall-zh-baker/tokens.txt"
+      tts_dict_dir: "/home/xiao/models/matcha-icefall-zh-baker/dict"
+      tts_lexicons:
+        - "/home/xiao/models/matcha-icefall-zh-baker/lexicon.txt"
+      tts_rule_fsts:
+        - "/home/xiao/models/matcha-icefall-zh-baker/phone.fst"
+        - "/home/xiao/models/matcha-icefall-zh-baker/date.fst"
+        - "/home/xiao/models/matcha-icefall-zh-baker/number.fst"
       tts_length_scale: 1.0
       tts_speed: 1.0
       tts_debug: false

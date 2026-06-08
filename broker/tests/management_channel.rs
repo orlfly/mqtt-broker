@@ -33,6 +33,9 @@ fn fake_sub(client_id: &str, topic: &str) -> Subscription {
         client_id: client_id.into(),
         topic_filter: topic.into(),
         qos: QoS::AtLeastOnce,
+        no_local: false,
+        retain_as_published: false,
+        retain_handling: 0,
     }
 }
 

@@ -142,9 +142,21 @@ fn build_sherpa_stack(cfg: &common::VoiceChannelConfig) -> Result<VoiceStack> {
     let capture: Arc<dyn AudioCapture> = Arc::new(CpalCapture::new(cap_cfg));
 
     let tts_cfg = SherpaTtsConfig {
+        backend: if cfg.tts_backend.is_empty() {
+            "vits".to_string()
+        } else {
+            cfg.tts_backend.clone()
+        },
         model: required(&cfg.tts_model, "tts_model")?,
         tokens: required(&cfg.tts_tokens, "tts_tokens")?,
-        data_dir: required(&cfg.tts_data_dir, "tts_data_dir")?,
+        // VITS Piper needs an espeak-ng-data dir; Kokoro also wants one
+        // (phoneme generation). Matcha-TTS uses its own lexicon.txt and
+        // doesn't need espeak-ng-data — so the data_dir is optional
+        // and left empty for matcha.
+        data_dir: match cfg.tts_backend.as_str() {
+            "matcha" => cfg.tts_data_dir.clone().unwrap_or_default(),
+            _ => required(&cfg.tts_data_dir, "tts_data_dir")?,
+        },
         length_scale: cfg.tts_length_scale,
         speed: cfg.tts_speed,
         noise_scale: cfg.tts_noise_scale,
@@ -152,6 +164,20 @@ fn build_sherpa_stack(cfg: &common::VoiceChannelConfig) -> Result<VoiceStack> {
         num_threads: cfg.num_threads,
         debug: cfg.tts_debug,
         output_device: cfg.audio_output_device.clone(),
+        voices: cfg.tts_voices.clone(),
+        dict_dir: cfg.tts_dict_dir.clone(),
+        lexicon: if cfg.tts_lexicons.is_empty() {
+            None
+        } else {
+            Some(cfg.tts_lexicons.join(","))
+        },
+        speaker_id: cfg.tts_speaker_id,
+        vocoder: cfg.tts_vocoder.clone(),
+        rule_fsts: if cfg.tts_rule_fsts.is_empty() {
+            None
+        } else {
+            Some(cfg.tts_rule_fsts.join(","))
+        },
     };
     let tts: Arc<dyn TtsSpeaker> = Arc::new(SherpaTts::new(tts_cfg)?);
 

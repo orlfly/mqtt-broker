@@ -11,8 +11,10 @@
 
 pub mod broker_tools;
 pub mod voice_loop;
+pub mod voice_text;
 
 pub use broker_tools::{
     GetTopicSubscribersTool, ListClientsTool, ListTopicsTool,
 };
 pub use voice_loop::{FollowupClassifier, VoiceLoop, VoiceLoopConfig};
+pub use voice_text::transform_for_tts;

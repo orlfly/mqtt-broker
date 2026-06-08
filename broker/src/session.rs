@@ -1,4 +1,4 @@
-use crate::state::{SessionState, Subscription, PublishPacket, WillMessage, SharedBrokerState};
+use crate::state::{SessionState, Subscription, PublishPacket, WillMessage, SharedBrokerState, QoS};
 
 pub struct SessionManager {
     state: SharedBrokerState,
@@ -32,10 +32,18 @@ impl SessionManager {
         store.session_store.get(client_id).cloned()
     }
 
-    pub async fn add_subscription(&self, client_id: &str, subscription: Subscription) {
+    pub async fn add_subscription(&self, client_id: &str, topic_filter: String, qos: QoS) {
         let mut store = self.state.write().await;
         if let Some(session) = store.session_store.get_mut(client_id) {
-            session.subscriptions.push(subscription);
+            session.subscriptions.retain(|s| s.topic_filter != topic_filter);
+            session.subscriptions.push(Subscription {
+                client_id: client_id.to_string(),
+                topic_filter,
+                qos,
+                no_local: false,
+                retain_as_published: false,
+                retain_handling: 0,
+            });
         }
     }
 

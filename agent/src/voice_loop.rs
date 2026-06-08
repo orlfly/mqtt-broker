@@ -5,11 +5,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use common::VoiceOutputConfig;
 use regex::Regex;
 use tokio::time::timeout;
 use tracing::{info, warn};
 use voice::{AsrTranscriber, AudioCapture, TtsSpeaker, WakeDetector, WakeEvent, WakeKind};
 use zeroclaw::agent::Agent;
+
+use crate::voice_text::transform_for_tts;
 
 /// Decides whether an agent response is asking the user for additional
 /// input (so the loop should re-open the mic without waiting for the
@@ -65,6 +68,10 @@ pub struct VoiceLoopConfig {
     pub exit_wake_words: Vec<String>,
     /// Optional TTS confirmation played when an exit-style wake word fires.
     pub exit_prompt: Option<String>,
+    /// 语音输出改写配置：把 LLM 原始 markdown / 富文本回复转成
+    /// TTS 友好版本。原始 `response` 仍保留（用于日志、followup
+    /// 分类），只有送进 `tts.speak()` 的字符串会走 transform。
+    pub voice_output: VoiceOutputConfig,
 }
 
 pub struct VoiceLoop {
@@ -275,14 +282,32 @@ impl VoiceLoop {
             let response = self.run_agent_with_busy_intercept(&user_text).await?;
             info!("[voice loop] LLM responded: {:?}", response);
 
-            info!("[voice loop] state = Speaking, response={:?}", response);
+            // ── 语音输出改写 ──
+            // 原始 `response` 保留给日志和 followup 分类（分类器
+            // 看 `?` / "请确认" / "是否" 等中文模式，transform
+            // 不会破坏这些），但送进 TTS 的版本要专门适配语音。
+            let tts_text = transform_for_tts(&response, &self.cfg.voice_output);
+            if tts_text != response {
+                info!(
+                    "[voice loop] voice_output transform: {} -> {} chars",
+                    response.chars().count(),
+                    tts_text.chars().count(),
+                );
+                tracing::debug!(
+                    original = %response,
+                    tts_text = %tts_text,
+                    "voice_output transform applied"
+                );
+            }
+
+            info!("[voice loop] state = Speaking, tts_text={:?}", tts_text);
             // While this response TTS is playing, neither the KWS
             // nor the capture stream is open — see the comment in
             // `run` about the "TTS 播报期间不处理唤醒和用户语音信息
             // 的 asr" rule. The next thing we do is either go back
             // to wait_for_wake (session done) or recurse into
             // capture_and_recognize for a follow-up turn.
-            self.tts.speak(&response, self.shutdown.clone()).await?;
+            self.tts.speak(&tts_text, self.shutdown.clone()).await?;
             // Diagnostic: snapshot right after TTS finishes but
             // before we decide whether to recurse for a follow-up
             // turn. This is the row that pairs with the
@@ -600,6 +625,7 @@ mod tests {
                 timeout_prompt: "等待超时".into(),
                 exit_wake_words: Vec::new(),
                 exit_prompt: None,
+                voice_output: VoiceOutputConfig::default(),
             },
             shutdown,
         )
@@ -991,6 +1017,7 @@ mod tests {
                 timeout_prompt: "等待超时".into(),
                 exit_wake_words: Vec::new(),
                 exit_prompt: None,
+                voice_output: VoiceOutputConfig::default(),
             },
             shutdown,
         )
