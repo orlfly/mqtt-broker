@@ -81,7 +81,11 @@ impl MqttEngine {
         ManagementHandle,
         impl std::future::Future<Output = ()> + Send,
     ) {
-        management_pair(self.state.clone())
+        management_pair(
+            self.state.clone(),
+            self.session_manager.clone(),
+            self.subscription_tree.clone(),
+        )
     }
 }
 

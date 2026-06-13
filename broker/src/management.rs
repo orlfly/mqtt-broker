@@ -40,10 +40,14 @@
 //! is dropped and the management task drains any remaining
 //! requests and exits cleanly.
 
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{info};
 
-use crate::state::{ClientInfo, SharedBrokerState, Subscription};
+use crate::packet::UserProperty;
+use crate::session::SessionManager;
+use crate::state::{ClientInfo, PublishPacket, QoS, SessionState, SharedBrokerState, Subscription};
+use crate::subscription::SubscriptionTree;
 
 /// One management operation. Each variant carries a `oneshot`
 /// reply channel so the requester can `.await` the result
@@ -64,6 +68,37 @@ pub enum ManagementRequest {
         topic: String,
         reply: oneshot::Sender<Vec<Subscription>>,
     },
+
+    /// Subscribe the agent (_agent) to a topic filter.
+    /// Matching publishes will be queued in the agent session
+    /// and can be drained via [`drain_messages`].
+    Subscribe {
+        topic_filter: String,
+        reply: oneshot::Sender<anyhow::Result<String>>,
+    },
+
+    /// Unsubscribe the agent from a topic filter.
+    Unsubscribe {
+        topic_filter: String,
+        reply: oneshot::Sender<anyhow::Result<String>>,
+    },
+
+    /// Publish a message through the broker. The message is
+    /// delivered to all matching subscribers (including the
+    /// agent's `_agent` subscription), exactly as if an MQTT
+    /// client had sent it.
+    Publish {
+        topic: String,
+        payload: Vec<u8>,
+        qos: u8,
+        retain: bool,
+        user_properties: Vec<(String, String)>,
+        reply: oneshot::Sender<anyhow::Result<String>>,
+    },
+
+    /// Drain (read + clear) all pending messages queued for
+    /// the agent via its subscription(s).
+    DrainMessages(oneshot::Sender<Vec<PublishPacket>>),
 }
 
 /// A topic + its subscriber list, materialised by the
@@ -148,6 +183,71 @@ impl ManagementHandle {
         rx.await
             .expect("management task dropped the reply sender")
     }
+
+    /// Subscribe the agent to a topic filter. Returns a
+    /// confirmation message on success.
+    pub async fn subscribe(&self, topic_filter: &str) -> anyhow::Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(ManagementRequest::Subscribe {
+                topic_filter: topic_filter.to_string(),
+                reply: tx,
+            })
+            .await
+            .expect("management task is not running");
+        rx.await.expect("management task dropped the reply sender")
+    }
+
+    /// Unsubscribe the agent from a topic filter.
+    pub async fn unsubscribe(&self, topic_filter: &str) -> anyhow::Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(ManagementRequest::Unsubscribe {
+                topic_filter: topic_filter.to_string(),
+                reply: tx,
+            })
+            .await
+            .expect("management task is not running");
+        rx.await.expect("management task dropped the reply sender")
+    }
+
+    /// Publish a message to the broker. The message is
+    /// delivered to all matching subscribers.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn publish(
+        &self,
+        topic: &str,
+        payload: &str,
+        qos: u8,
+        retain: bool,
+        user_properties: Vec<(String, String)>,
+    ) -> anyhow::Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(ManagementRequest::Publish {
+                topic: topic.to_string(),
+                payload: payload.as_bytes().to_vec(),
+                qos,
+                retain,
+                user_properties,
+                reply: tx,
+            })
+            .await
+            .expect("management task is not running");
+        rx.await.expect("management task dropped the reply sender")
+    }
+
+    /// Drain (read + clear) all pending messages queued for
+    /// the agent.
+    pub async fn drain_messages(&self) -> Vec<PublishPacket> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(ManagementRequest::DrainMessages(tx))
+            .await
+            .expect("management task is not running");
+        rx.await
+            .expect("management task dropped the reply sender")
+    }
 }
 
 /// Channel buffer size for the management mpsc. At this
@@ -158,45 +258,35 @@ impl ManagementHandle {
 pub const MGMT_CHANNEL_DEPTH: usize = 32;
 
 /// Drive the management channel: read a request, take the
-/// broker's read lock, build the reply, send it back. This
-/// task is the **only** place that holds the read lock for
-/// management queries.
-///
-/// The lock is held only for the duration of the clone+map
-/// that builds the reply, not for the duration of the
-/// `oneshot::send` (which is just a pointer copy). That
-/// keeps the critical section short even if the request
-/// payload is large.
+/// broker's read lock, build the reply, send it back. Read
+/// variants hold the read lock; write variants
+/// (Subscribe/Unsubscribe/Publish/DrainMessages) directly
+/// use `SubscriptionTree` and `SessionManager` with write
+/// access as needed.
 ///
 /// Exits when the channel is closed (i.e. the last
 /// `ManagementHandle` was dropped). The exit log line is
-/// useful in shutdown traces — it tells the operator that
-/// the management task did terminate, not that it was
-/// killed by a panic.
+/// useful in shutdown traces.
 pub async fn management_loop(
     state: SharedBrokerState,
     mut rx: mpsc::Receiver<ManagementRequest>,
+    session_manager: Arc<SessionManager>,
+    subscription_tree: Arc<SubscriptionTree>,
 ) {
     info!("[broker management] task started");
     while let Some(req) = rx.recv().await {
-        // Hold the read lock only across the clone/collect
-        // that builds the reply payload. The `oneshot::send`
-        // below runs lock-free.
-        let state_guard = state.read().await;
         match req {
             ManagementRequest::ListClients(reply) => {
+                let state_guard = state.read().await;
                 let clients: Vec<ClientInfo> =
                     state_guard.clients.values().cloned().collect();
                 drop(state_guard);
-                // Log-and-ignore the send error: it only
-                // happens if the caller was dropped (e.g.
-                // the LLM cancelled the tool call), which
-                // is fine.
                 if reply.send(clients).is_err() {
                     tracing::debug!("[broker management] list_clients caller dropped");
                 }
             }
             ManagementRequest::GetClient { client_id, reply } => {
+                let state_guard = state.read().await;
                 let client = state_guard.clients.get(&client_id).cloned();
                 drop(state_guard);
                 if reply.send(client).is_err() {
@@ -206,6 +296,7 @@ pub async fn management_loop(
                 }
             }
             ManagementRequest::ListSubscriptions(reply) => {
+                let state_guard = state.read().await;
                 let topics: Vec<TopicSubscribers> = state_guard
                     .subscriptions
                     .iter()
@@ -220,6 +311,7 @@ pub async fn management_loop(
                 }
             }
             ManagementRequest::GetTopicSubscribers { topic, reply } => {
+                let state_guard = state.read().await;
                 let subs: Vec<Subscription> = state_guard
                     .subscriptions
                     .get(&topic)
@@ -232,6 +324,104 @@ pub async fn management_loop(
                     );
                 }
             }
+
+            // ── Write variants ────────────────────────────────────────
+
+            ManagementRequest::Subscribe {
+                topic_filter,
+                reply,
+            } => {
+                // Ensure the _agent session exists
+                {
+                    let mut state_guard = state.write().await;
+                    state_guard
+                        .session_store
+                        .entry("_agent".into())
+                        .or_insert_with(|| SessionState {
+                            client_id: "_agent".into(),
+                            subscriptions: Vec::new(),
+                            pending_messages: Vec::new(),
+                            will_message: None,
+                        });
+                }
+                subscription_tree
+                    .add(Subscription {
+                        client_id: "_agent".into(),
+                        topic_filter: topic_filter.clone(),
+                        qos: QoS::AtMostOnce,
+                        no_local: false,
+                        retain_as_published: false,
+                        retain_handling: 0,
+                    })
+                    .await;
+                let msg = format!("subscribed to '{}'", topic_filter);
+                if reply.send(Ok(msg)).is_err() {
+                    tracing::debug!("[broker management] subscribe caller dropped");
+                }
+            }
+
+            ManagementRequest::Unsubscribe {
+                topic_filter,
+                reply,
+            } => {
+                subscription_tree.remove("_agent", &topic_filter).await;
+                let msg = format!("unsubscribed from '{}'", topic_filter);
+                if reply.send(Ok(msg)).is_err() {
+                    tracing::debug!("[broker management] unsubscribe caller dropped");
+                }
+            }
+
+            ManagementRequest::Publish {
+                topic,
+                payload,
+                qos,
+                retain,
+                user_properties,
+                reply,
+            } => {
+                let store = PublishPacket {
+                    topic: topic.clone(),
+                    payload,
+                    qos: match qos {
+                        0 => QoS::AtMostOnce,
+                        1 => QoS::AtLeastOnce,
+                        _ => QoS::ExactlyOnce,
+                    },
+                    retain,
+                    user_properties: user_properties
+                        .into_iter()
+                        .map(|(k, v)| UserProperty {
+                            key: k,
+                            value: v,
+                        })
+                        .collect(),
+                    content_type: None,
+                    response_topic: None,
+                    correlation_data: None,
+                    message_expiry_interval: None,
+                    payload_format_indicator: None,
+                    topic_alias: None,
+                };
+                let subscribers = subscription_tree.match_topic(&topic).await;
+                let count = subscribers.len();
+                for sub in &subscribers {
+                    session_manager
+                        .enqueue_pending(&sub.client_id, store.clone())
+                        .await;
+                }
+                let msg =
+                    format!("published to '{}', delivered to {} subscriber(s)", topic, count);
+                if reply.send(Ok(msg)).is_err() {
+                    tracing::debug!("[broker management] publish caller dropped");
+                }
+            }
+
+            ManagementRequest::DrainMessages(reply) => {
+                let msgs = session_manager.drain_pending("_agent").await;
+                if reply.send(msgs).is_err() {
+                    tracing::debug!("[broker management] drain_messages caller dropped");
+                }
+            }
         }
     }
     info!("[broker management] task exiting (channel closed)");
@@ -241,9 +431,11 @@ pub async fn management_loop(
 /// for spawning the future on the tokio runtime.
 pub fn management_pair(
     state: SharedBrokerState,
+    session_manager: Arc<SessionManager>,
+    subscription_tree: Arc<SubscriptionTree>,
 ) -> (ManagementHandle, impl std::future::Future<Output = ()> + Send) {
     let (tx, rx) = mpsc::channel(MGMT_CHANNEL_DEPTH);
     let handle = ManagementHandle { tx };
-    let task = management_loop(state, rx);
+    let task = management_loop(state, rx, session_manager, subscription_tree);
     (handle, task)
 }

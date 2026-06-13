@@ -8,13 +8,23 @@
 //! can't see, e.g. dropping the reply sender before the
 //! caller awaits it).
 
-use broker::management::management_pair;
+use std::sync::Arc;
+
+use broker::management_pair;
+use broker::session::SessionManager;
 use broker::state::{
     create_shared_state, ClientInfo, MqttProtocol, QoS, Subscription,
 };
+use broker::subscription::SubscriptionTree;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Instant;
 use tokio::time::Duration;
+
+fn make_mgmt(state: broker::state::SharedBrokerState) -> (broker::management::ManagementHandle, impl std::future::Future<Output = ()> + Send) {
+    let session_manager = Arc::new(SessionManager::new(state.clone()));
+    let subscription_tree = Arc::new(SubscriptionTree::new(state.clone()));
+    management_pair(state, session_manager, subscription_tree)
+}
 
 fn fake_client(id: &str) -> ClientInfo {
     ClientInfo {
@@ -47,7 +57,7 @@ async fn list_clients_returns_all_connected() {
         s.clients.insert("a".into(), fake_client("a"));
         s.clients.insert("b".into(), fake_client("b"));
     }
-    let (mgmt, task) = management_pair(state);
+    let (mgmt, task) = make_mgmt(state);
     tokio::spawn(task);
 
     let clients = mgmt.list_clients().await;
@@ -61,7 +71,7 @@ async fn list_clients_returns_all_connected() {
 async fn get_client_returns_some_for_known_id() {
     let state = create_shared_state();
     state.write().await.clients.insert("a".into(), fake_client("a"));
-    let (mgmt, task) = management_pair(state);
+    let (mgmt, task) = make_mgmt(state);
     tokio::spawn(task);
 
     let c = mgmt.get_client("a").await.expect("client a exists");
@@ -72,7 +82,7 @@ async fn get_client_returns_some_for_known_id() {
 #[tokio::test]
 async fn get_client_returns_none_for_unknown_id() {
     let state = create_shared_state();
-    let (mgmt, task) = management_pair(state);
+    let (mgmt, task) = make_mgmt(state);
     tokio::spawn(task);
 
     assert!(mgmt.get_client("ghost").await.is_none());
@@ -96,7 +106,7 @@ async fn list_subscriptions_returns_topics_with_subscriber_counts() {
             .or_default()
             .push(fake_sub("a", "actuators/light"));
     }
-    let (mgmt, task) = management_pair(state);
+    let (mgmt, task) = make_mgmt(state);
     tokio::spawn(task);
 
     let topics = mgmt.list_subscriptions().await;
@@ -116,7 +126,7 @@ async fn list_subscriptions_returns_topics_with_subscriber_counts() {
 #[tokio::test]
 async fn get_topic_subscribers_returns_empty_for_unknown_topic() {
     let state = create_shared_state();
-    let (mgmt, task) = management_pair(state);
+    let (mgmt, task) = make_mgmt(state);
     tokio::spawn(task);
 
     let subs = mgmt.get_topic_subscribers("never/subscribed").await;
@@ -137,7 +147,7 @@ async fn get_topic_subscribers_returns_only_matching_topic() {
             .or_default()
             .push(fake_sub("b", "bar"));
     }
-    let (mgmt, task) = management_pair(state);
+    let (mgmt, task) = make_mgmt(state);
     tokio::spawn(task);
 
     let subs = mgmt.get_topic_subscribers("foo").await;
@@ -154,7 +164,7 @@ async fn get_topic_subscribers_returns_only_matching_topic() {
 async fn many_concurrent_list_clients_calls_all_succeed() {
     let state = create_shared_state();
     state.write().await.clients.insert("a".into(), fake_client("a"));
-    let (mgmt, task) = management_pair(state);
+    let (mgmt, task) = make_mgmt(state);
     tokio::spawn(task);
 
     let mut handles = Vec::new();

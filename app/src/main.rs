@@ -28,7 +28,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent::{
-    FollowupClassifier, GetTopicSubscribersTool, ListClientsTool, ListTopicsTool,
+    DrainMessagesTool, FollowupClassifier, GetTopicSubscribersTool, ListClientsTool,
+    ListTopicsTool, PublishTool, SubscribeTool, UnsubscribeTool,
     VoiceLoop, VoiceLoopConfig,
 };
 use anyhow::Result;
@@ -174,6 +175,10 @@ async fn main() -> Result<()> {
         Box::new(ListClientsTool::new(mgmt.clone())),
         Box::new(ListTopicsTool::new(mgmt.clone())),
         Box::new(GetTopicSubscribersTool::new(mgmt.clone())),
+        Box::new(SubscribeTool::new(mgmt.clone())),
+        Box::new(UnsubscribeTool::new(mgmt.clone())),
+        Box::new(PublishTool::new(mgmt.clone())),
+        Box::new(DrainMessagesTool::new(mgmt.clone())),
     ];
     tools.extend(file_tools);
 
